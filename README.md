@@ -2,6 +2,8 @@
 
 A production-quality planning engine that generates weekly Reddit content calendars with human-like posting patterns, strict guardrails, and quality scoring.
 
+> 📖 **New to the app?** See [USAGE.md](./USAGE.md) for a step-by-step guide.
+
 ## Features
 
 ### Generation Modes
