@@ -22,7 +22,7 @@ A production-quality planning engine that generates weekly Reddit content calend
 - **Topic Selection**: Intelligent theme-subreddit matching with rotation to avoid repetition
 - **Persona Assignment**: Assigns OP and 1-2 commenters with natural interaction patterns
 - **Temporal Scheduling**: Posts weighted towards Tue-Thu with randomized time windows (±90 min)
-- **Quality Scoring**: Hybrid rule-based + LLM scoring (rejects posts < 7/10)
+- **Quality Scoring**: Hybrid rule-based + LLM scoring (rejects posts < 6/10)
 
 ### Guardrails
 - ✅ Max 1 post per subreddit per week
@@ -75,6 +75,14 @@ NEXT_PUBLIC_OPENAI_API_KEY=sk-your-key-here
 
 Or enter the API key directly in the UI.
 
+### Running Tests
+
+```bash
+npm test              # Run all tests
+npm run test:watch    # Watch mode
+npm run test:coverage # With coverage report
+```
+
 ### Build for Production
 
 ```bash
@@ -86,8 +94,15 @@ npm start
 
 ```
 src/
+├── __tests__/              # Test suite
+│   ├── capacity.test.ts          # Capacity calculation tests
+│   ├── edgeCases.test.ts         # Edge case handling tests
+│   ├── guardrails.test.ts        # Guardrail validation tests
+│   └── qualityScoring.test.ts    # Quality scoring tests
 ├── app/                    # Next.js App Router
 │   ├── api/calendar/       # API routes
+│   │   └── route.ts
+│   ├── globals.css         # Global styles
 │   ├── page.tsx            # Main UI
 │   └── layout.tsx          # App layout
 ├── components/             # React components
@@ -99,11 +114,13 @@ src/
 │   └── useCalendarPlanner.ts
 ├── lib/                    # Core logic
 │   ├── llm/                # LLM integration
+│   │   ├── index.ts              # Barrel exports
 │   │   ├── types.ts              # LLM type definitions
 │   │   ├── openai-provider.ts    # OpenAI implementation
 │   │   ├── content-generator.ts  # Post/comment generation
 │   │   └── quality-scorer.ts     # LLM quality evaluation
 │   ├── planner/            # Planning algorithm
+│   │   ├── index.ts              # Barrel exports
 │   │   ├── calendarGenerator.ts  # Main orchestrator
 │   │   ├── capacity.ts           # Capacity calculation
 │   │   ├── guardrails.ts         # Rule enforcement
@@ -112,6 +129,7 @@ src/
 │   │   ├── scheduler.ts          # Temporal scheduling
 │   │   └── topicSelector.ts      # Topic selection
 │   └── storage/            # Persistence layer
+│       ├── index.ts              # Barrel exports
 │       ├── storage-interface.ts  # Abstract interface
 │       └── historyStorage.ts     # localStorage impl
 └── types/                  # TypeScript types
@@ -196,7 +214,7 @@ export const GUARDRAIL_RULES = {
   MIN_HOURS_BETWEEN_SAME_PERSONA_POSTS: 48,
   MIN_COMMENT_DELAY_MINUTES: 10,
   MAX_FIRST_COMMENT_DELAY_MINUTES: 90,
-  MIN_QUALITY_SCORE: 7,
+  MIN_QUALITY_SCORE: 6,
   MIN_WEEKS_BEFORE_THEME_REUSE: 3,
 };
 ```
