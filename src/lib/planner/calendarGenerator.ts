@@ -49,12 +49,16 @@ export interface GenerationOptions {
   useLLMScoring: boolean;       // Use LLM for quality scoring
   llmWeight?: number;           // Weight of LLM score (0-1, default 0.3)
   openAIApiKey?: string;        // Optional API key override
+  autoImprove?: boolean;        // Auto-regenerate posts with score < 6
+  maxRetries?: number;          // Max retries for auto-improvement (default: 2)
 }
 
 export const DEFAULT_GENERATION_OPTIONS: GenerationOptions = {
   mode: 'titles-only',
   useLLMScoring: false,
   llmWeight: 0.3,
+  autoImprove: false,
+  maxRetries: 2,
 };
 
 // ============================================
@@ -156,15 +160,20 @@ export async function generateCalendar(
     warnings.push(`Only ${topics.length} valid topics found. Requested ${numPosts} posts.`);
   }
   
-  // Step 4: Generate posts
-  const posts: PlannedPost[] = [];
+  // Step 4: Prepare post generation tasks
+  const postTasks: Array<{
+    index: number;
+    topic: TopicSelection;
+    day: Date;
+    assignment: PersonaAssignment;
+  }> = [];
   const assignedOPs: string[] = [];
   
   for (let i = 0; i < Math.min(topics.length, postingDays.length); i++) {
     const topic = topics[i];
     const day = postingDays[i];
     
-    // Assign personas
+    // Assign personas (must be sequential to track assigned OPs)
     const assignment = assignPersonas({
       availablePersonas: capacity.availablePersonas,
       day,
@@ -183,155 +192,39 @@ export async function generateCalendar(
     }
     
     assignedOPs.push(assignment.op.id);
-    
-    // Generate post content (LLM or fallback)
-    let postTitle = topic.title;
-    let postBody = topic.bodyPreview;
-    
-    if (isFullContentMode && llmAvailable) {
-      try {
-        const contentContext: ContentGenerationContext = {
-          company: {
-            name: input.company.name,
-            description: input.company.description,
-            painPoints: input.company.painPoints,
-          },
-          persona: {
-            username: assignment.op.username,
-            info: assignment.op.info,
-            role: assignment.op.role,
-            tone: assignment.op.tone,
-          },
-          subreddit: {
-            name: topic.subreddit.name,
-            culture: topic.subreddit.culture,
-          },
-          theme: {
-            keyword: topic.theme.keyword,
-            category: topic.theme.category,
-          },
-          postType: topic.postType,
-        };
-        
-        const generatedContent = await generatePostContent(contentContext, llmProvider);
-        postTitle = generatedContent.title;
-        postBody = generatedContent.body;
-      } catch (error) {
-        console.error('LLM content generation failed:', error);
-        warnings.push(`Post ${i + 1}: LLM generation failed, using fallback content`);
-      }
-    }
-    
-    // Generate post time
-    const scheduledTime = generatePostTime(day);
-    
-    // Generate comments (LLM or fallback)
-    let scheduledComments: PlannedComment[];
-    
-    if (isFullContentMode && llmAvailable) {
-      try {
-        const commentContext: CommentGenerationContext = {
-          company: {
-            name: input.company.name,
-            description: input.company.description,
-            painPoints: input.company.painPoints,
-          },
-          persona: {
-            username: assignment.op.username,
-            info: assignment.op.info,
-            role: assignment.op.role,
-            tone: assignment.op.tone,
-          },
-          subreddit: {
-            name: topic.subreddit.name,
-            culture: topic.subreddit.culture,
-          },
-          theme: {
-            keyword: topic.theme.keyword,
-            category: topic.theme.category,
-          },
-          postType: topic.postType,
-          postTitle,
-          postBody,
-          commenterPersona: assignment.commenters[0] || assignment.op,
-          isFirstComment: true,
-        };
-        
-        const commenterPersonas = assignment.commenters.map(c => ({
-          username: c.username,
-          info: c.info,
-          role: c.role,
-          tone: c.tone,
-        }));
-        
-        const generatedComments = await generateCommentThread(
-          commentContext,
-          assignment.comments.length,
-          commenterPersonas,
-          llmProvider
-        );
-        
-        // Map generated comments to PlannedComment with timing
-        scheduledComments = assignment.comments.map((originalComment, idx) => {
-          const generated = generatedComments[idx];
-          const commentTime = new Date(scheduledTime);
-          commentTime.setMinutes(commentTime.getMinutes() + originalComment.delayMinutes);
-          
-          return {
-            ...originalComment,
-            seedText: generated?.text || originalComment.seedText,
-            timing: commentTime,
-          };
-        });
-      } catch (error) {
-        console.error('LLM comment generation failed:', error);
-        scheduledComments = scheduleComments(scheduledTime, assignment.comments);
-      }
-    } else {
-      scheduledComments = scheduleComments(scheduledTime, assignment.comments);
-    }
-    
-    // Create post object
-    const isFullContent = isFullContentMode && llmAvailable;
-    const post: PlannedPost = {
-      id: uuidv4(),
-      day,
-      dayOfWeek: getDayOfWeekName(day),
-      subreddit: topic.subreddit,
-      persona: assignment.op,
-      title: postTitle,
-      bodyPreview: isFullContent ? postBody.substring(0, 150) + (postBody.length > 150 ? '...' : '') : postBody,
-      postBody: isFullContent ? postBody : undefined,
-      postType: topic.postType,
-      themeIds: [topic.theme.id],
-      comments: scheduledComments,
-      qualityScore: 0,
-      qualityFactors: [],
-      scheduledTime,
-    };
-    
-    // Step 5: Calculate quality score (hybrid if LLM scoring enabled)
-    const useLLMScoring = options.useLLMScoring && llmAvailable;
-    const qualityResult = await calculateHybridQualityScore(
-      post, 
-      input.company, 
+    postTasks.push({ index: i, topic, day, assignment });
+  }
+  
+  // Step 5: Generate all posts in PARALLEL to optimize for speed
+  const isFullContent = isFullContentMode && llmAvailable;
+  const useLLMScoring = options.useLLMScoring && llmAvailable;
+  const autoImprove = (options.autoImprove ?? false) && isFullContent;
+  const maxRetries = options.maxRetries ?? 2;
+  
+  const postResults = await Promise.all(
+    postTasks.map(task => generateSinglePost({
+      task,
+      input,
+      isFullContent,
+      llmProvider,
       useLLMScoring,
-      options.llmWeight
-    );
-    post.qualityScore = qualityResult.hybridScore;
-    post.qualityFactors = qualityResult.factors;
-    
-    // Reject low-quality posts
-    if (!qualityResult.passed) {
-      warnings.push(
-        `Post "${post.title}" rejected (quality: ${qualityResult.hybridScore}/10). ` +
-        `Min required: ${MIN_QUALITY_SCORE}/10`
-      );
+      llmWeight: options.llmWeight,
+      autoImprove,
+      maxRetries,
+    }))
+  );
+  
+  // Collect results
+  const posts: PlannedPost[] = [];
+  for (const result of postResults) {
+    if (result.success && result.post) {
+      posts.push(result.post);
+    } else {
+      if (result.warning) {
+        warnings.push(result.warning);
+      }
       postsRejected++;
-      continue;
     }
-    
-    posts.push(post);
   }
   
   if (posts.length === 0) {
@@ -433,6 +326,227 @@ export async function regenerateCalendar(
   
   // Generate new calendar
   return generateCalendar(input, weekStart, options);
+}
+
+// ============================================
+// Single Post Generation (for parallel execution)
+// ============================================
+
+interface PostGenerationTask {
+  index: number;
+  topic: TopicSelection;
+  day: Date;
+  assignment: PersonaAssignment;
+}
+
+interface PostGenerationParams {
+  task: PostGenerationTask;
+  input: PlannerInput;
+  isFullContent: boolean;
+  llmProvider: ReturnType<typeof getOpenAIProvider>;
+  useLLMScoring: boolean;
+  llmWeight?: number;
+  autoImprove: boolean;
+  maxRetries: number;
+}
+
+interface PostGenerationResult {
+  success: boolean;
+  post?: PlannedPost;
+  warning?: string;
+  retryCount?: number;
+}
+
+/**
+ * Generate a single post (can be called in parallel)
+ * Includes auto-improvement if enabled
+ */
+async function generateSinglePost(params: PostGenerationParams): Promise<PostGenerationResult> {
+  const { task, input, isFullContent, llmProvider, useLLMScoring, llmWeight, autoImprove, maxRetries } = params;
+  const { index, topic, day, assignment } = task;
+  
+  let retryCount = 0;
+  let lastQualityResult: Awaited<ReturnType<typeof calculateHybridQualityScore>> | null = null;
+  let improvementHints: string[] = [];
+  
+  while (retryCount <= maxRetries) {
+    try {
+      // Generate post content
+      let postTitle = topic.title;
+      let postBody = topic.bodyPreview;
+      
+      if (isFullContent) {
+        const contentContext: ContentGenerationContext = {
+          company: {
+            name: input.company.name,
+            description: input.company.description,
+            painPoints: input.company.painPoints,
+          },
+          persona: {
+            username: assignment.op.username,
+            info: assignment.op.info,
+            role: assignment.op.role,
+            tone: assignment.op.tone,
+          },
+          subreddit: {
+            name: topic.subreddit.name,
+            culture: topic.subreddit.culture,
+          },
+          theme: {
+            keyword: topic.theme.keyword,
+            category: topic.theme.category,
+          },
+          postType: topic.postType,
+          // Pass improvement hints for retry attempts
+          improvementHints: retryCount > 0 ? improvementHints : undefined,
+        };
+        
+        const generatedContent = await generatePostContent(contentContext, llmProvider);
+        postTitle = generatedContent.title;
+        postBody = generatedContent.body;
+      }
+      
+      // Generate post time
+      const scheduledTime = generatePostTime(day);
+      
+      // Generate comments
+      let scheduledComments: PlannedComment[];
+      
+      if (isFullContent) {
+        const commentContext: CommentGenerationContext = {
+          company: {
+            name: input.company.name,
+            description: input.company.description,
+            painPoints: input.company.painPoints,
+          },
+          persona: {
+            username: assignment.op.username,
+            info: assignment.op.info,
+            role: assignment.op.role,
+            tone: assignment.op.tone,
+          },
+          subreddit: {
+            name: topic.subreddit.name,
+            culture: topic.subreddit.culture,
+          },
+          theme: {
+            keyword: topic.theme.keyword,
+            category: topic.theme.category,
+          },
+          postType: topic.postType,
+          postTitle,
+          postBody,
+          commenterPersona: assignment.commenters[0] || assignment.op,
+          isFirstComment: true,
+        };
+        
+        const commenterPersonas = assignment.commenters.map(c => ({
+          username: c.username,
+          info: c.info,
+          role: c.role,
+          tone: c.tone,
+        }));
+        
+        const generatedComments = await generateCommentThread(
+          commentContext,
+          assignment.comments.length,
+          commenterPersonas,
+          llmProvider
+        );
+        
+        scheduledComments = assignment.comments.map((originalComment, idx) => {
+          const generated = generatedComments[idx];
+          const commentTime = new Date(scheduledTime);
+          commentTime.setMinutes(commentTime.getMinutes() + originalComment.delayMinutes);
+          
+          return {
+            ...originalComment,
+            seedText: generated?.text || originalComment.seedText,
+            timing: commentTime,
+          };
+        });
+      } else {
+        scheduledComments = scheduleComments(scheduledTime, assignment.comments);
+      }
+      
+      // Create post object
+      const post: PlannedPost = {
+        id: uuidv4(),
+        day,
+        dayOfWeek: getDayOfWeekName(day),
+        subreddit: topic.subreddit,
+        persona: assignment.op,
+        title: postTitle,
+        bodyPreview: isFullContent ? postBody.substring(0, 150) + (postBody.length > 150 ? '...' : '') : postBody,
+        postBody: isFullContent ? postBody : undefined,
+        postType: topic.postType,
+        themeIds: [topic.theme.id],
+        comments: scheduledComments,
+        qualityScore: 0,
+        qualityFactors: [],
+        scheduledTime,
+      };
+      
+      // Calculate quality score
+      const qualityResult = await calculateHybridQualityScore(
+        post,
+        input.company,
+        useLLMScoring,
+        llmWeight
+      );
+      post.qualityScore = qualityResult.hybridScore;
+      post.qualityFactors = qualityResult.factors;
+      lastQualityResult = qualityResult;
+      
+      // Check if quality passes
+      if (qualityResult.passed) {
+        return {
+          success: true,
+          post,
+          retryCount,
+        };
+      }
+      
+      // Quality too low - check if we should retry with auto-improvement
+      if (autoImprove && retryCount < maxRetries) {
+        // Collect improvement hints from quality factors
+        improvementHints = qualityResult.factors
+          .filter(f => f.score < 7)
+          .map(f => f.reason);
+        
+        // Add LLM suggestions if available
+        if (qualityResult.llmSuggestions) {
+          improvementHints.push(...qualityResult.llmSuggestions);
+        }
+        
+        console.log(`Post ${index + 1}: Score ${qualityResult.hybridScore}/10 - retrying with improvements (attempt ${retryCount + 1}/${maxRetries})`);
+        retryCount++;
+        continue;
+      }
+      
+      // No more retries - reject the post
+      return {
+        success: false,
+        warning: `Post "${post.title}" rejected (quality: ${qualityResult.hybridScore}/10, retries: ${retryCount}). Min required: ${MIN_QUALITY_SCORE}/10`,
+        retryCount,
+      };
+      
+    } catch (error) {
+      console.error(`Post ${index + 1} generation failed:`, error);
+      return {
+        success: false,
+        warning: `Post ${index + 1}: Generation failed - ${error instanceof Error ? error.message : 'Unknown error'}`,
+        retryCount,
+      };
+    }
+  }
+  
+  // Should not reach here, but just in case
+  return {
+    success: false,
+    warning: `Post ${index + 1}: Max retries exceeded`,
+    retryCount,
+  };
 }
 
 // ============================================

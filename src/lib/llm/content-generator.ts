@@ -186,7 +186,7 @@ export async function generateCommentThread(
 // ============================================
 
 function buildPostPrompt(context: ContentGenerationContext): string {
-  return `Write a Reddit post for the following context:
+  let prompt = `Write a Reddit post for the following context:
 
 **Subreddit**: ${context.subreddit.name}
 ${context.subreddit.culture ? `**Subreddit culture**: ${context.subreddit.culture}` : ''}
@@ -209,9 +209,23 @@ Write an authentic post that:
 3. Is related to "${context.theme.keyword}"
 4. Is a ${context.postType} post
 5. Does NOT mention ${context.company.name} directly
-6. Invites genuine discussion
+6. Invites genuine discussion`;
+
+  // Add improvement hints if this is a retry
+  if (context.improvementHints && context.improvementHints.length > 0) {
+    prompt += `
+
+**IMPORTANT - Previous version scored too low. Please address these issues:**
+${context.improvementHints.map((hint, i) => `${i + 1}. ${hint}`).join('\n')}
+
+Make sure to specifically address each of these points while keeping the post natural.`;
+  }
+
+  prompt += `
 
 Return JSON with title, body, and relevant keywords.`;
+
+  return prompt;
 }
 
 function buildCommentPrompt(context: CommentGenerationContext): string {

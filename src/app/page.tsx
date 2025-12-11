@@ -186,6 +186,29 @@ export default function Home() {
 
               {showAdvancedOptions && (
                 <div className={`mt-4 space-y-4 pt-4 border-t ${isGenerating ? 'opacity-60 pointer-events-none' : ''}`}>
+                  {/* Auto-Improvement Toggle (Full Content Mode Only) */}
+                  {options.mode === 'full-content' && (
+                    <label className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">Auto-Improvement</div>
+                        <div className="text-xs text-gray-500">Regenerate low-scoring posts (up to 2 retries)</div>
+                      </div>
+                      <button
+                        onClick={() => setOptions({ autoImprove: !options.autoImprove })}
+                        disabled={isGenerating}
+                        className={`relative w-11 h-6 rounded-full transition-colors ${
+                          options.autoImprove ? 'bg-green-600' : 'bg-gray-200'
+                        } ${isGenerating ? 'cursor-not-allowed' : ''}`}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                            options.autoImprove ? 'translate-x-5' : ''
+                          }`}
+                        />
+                      </button>
+                    </label>
+                  )}
+
                   {/* LLM Quality Scoring Toggle */}
                   <label className="flex items-center justify-between">
                     <div>

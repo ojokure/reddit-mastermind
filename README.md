@@ -16,6 +16,7 @@ A production-quality planning engine that generates weekly Reddit content calend
 - Natural-sounding comment threads
 - LLM-enhanced quality scoring
 - Persona-aware content generation
+- **Auto-improvement** with retry on low scores
 
 ### Core Algorithm
 - **Capacity Calculation**: Respects posting limits per subreddit (1/week), per persona (48h gaps), and daily limits
@@ -228,6 +229,8 @@ interface GenerationOptions {
   useLLMScoring: boolean;
   llmWeight?: number; 
   openAIApiKey?: string;
+  autoImprove?: boolean;  // Auto-regenerate low-scoring posts
+  maxRetries?: number;    // Max retry attempts (default: 2)
 }
 ```
 

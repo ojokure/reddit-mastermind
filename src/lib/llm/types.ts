@@ -64,6 +64,7 @@ export interface ContentGenerationContext {
     category?: string;
   };
   postType: string;
+  improvementHints?: string[];
 }
 
 export interface CommentGenerationContext extends ContentGenerationContext {
