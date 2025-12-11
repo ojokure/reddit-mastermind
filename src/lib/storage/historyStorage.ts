@@ -380,8 +380,19 @@ export class LocalStorageProvider implements IStorageProvider {
   }
 }
 
-const localStorageProvider = new LocalStorageProvider();
-registerStorageProvider(localStorageProvider);
-setActiveStorageProvider(localStorageProvider);
+// Lazy initialization to avoid SSR issues
+let localStorageProvider: LocalStorageProvider | null = null;
 
-export { localStorageProvider };
+export function getLocalStorageProvider(): LocalStorageProvider {
+  if (!localStorageProvider) {
+    localStorageProvider = new LocalStorageProvider();
+    registerStorageProvider(localStorageProvider);
+    setActiveStorageProvider(localStorageProvider);
+  }
+  return localStorageProvider;
+}
+
+// Initialize on client-side only
+if (typeof window !== 'undefined') {
+  getLocalStorageProvider();
+}

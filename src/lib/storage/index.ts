@@ -14,7 +14,7 @@ export {
 // LocalStorage provider
 export {
   LocalStorageProvider,
-  localStorageProvider,
+  getLocalStorageProvider,
   getHistory,
   saveHistory,
   clearHistory,
