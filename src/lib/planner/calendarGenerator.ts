@@ -96,7 +96,7 @@ export async function generateCalendar(
   const allViolations: GuardrailViolation[] = [];
   let postsRejected = 0;
   
-  // Initialize LLM provider if API key provided
+  // Initialize LLM provider if API key provided and not already initialized
   if (options.openAIApiKey) {
     getOpenAIProvider(options.openAIApiKey);
   }

@@ -182,7 +182,7 @@ export function validateComments(
   // Check no self-replies (OP replying to OP's own comment immediately)
   for (const comment of comments) {
     if (comment.persona.id === post.persona.id && !comment.parentCommentId) {
-      // Looking at sample data, OP (riley_ops) does reply to comment chains
+      // Looking at sample data from Slideforge, OP (riley_ops) does reply to comment chains
       // The rule is: OP shouldn't post the FIRST comment
       const isFirstComment = comments.indexOf(comment) === 0;
       if (isFirstComment) {
@@ -305,6 +305,10 @@ export function validatePostContent(
     'game changer',
     'revolutionary',
     '10x your',
+    'discount code',
+    'use my link',
+    'affiliate',
+    'sponsored',
   ];
   
   const contentLower = (title + ' ' + body).toLowerCase();
